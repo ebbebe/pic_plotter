@@ -296,18 +296,49 @@ class EntryScreen extends StatelessWidget {
 }
 
 
+Future<void> copyExcelFile(String sourcePath, String targetPath) async {
+  // 원본 파일 객체 생성
+  final File sourceFile = File(sourcePath);
 
+  // 파일 존재 여부 확인
+  if (await sourceFile.exists()) {
+    try {
+      // 파일을 새 경로로 복사
+      await sourceFile.copy(targetPath);
+      print('파일이 성공적으로 복사되었습니다: $targetPath');
+    } catch (e) {
+      // 에러 핸들링
+      print('파일을 복사하는 중 에러가 발생했습니다: $e');
+    }
+  } else {
+    print('원본 파일이 존재하지 않습니다: $sourcePath');
+  }
+}
 
 Future<void> exportDataToExcel(String folderName) async {
   // 저장소 설정
   final baseDirectoryPath = '/storage/emulated/0/Documents/PicPlotter';
   final jsonDirectory = Directory('$baseDirectoryPath/$folderName');
-  final excel = Excel.createExcel();
+  // final excel = Excel.createExcel();
+
+  final jsonDirPath = '/storage/emulated/0/Documents/PicPlotter/$folderName';
+  final excelLayoutPath = '/storage/emulated/0/Documents/PicPlotter/excel_layout.xlsx';
+
+  copyExcelFile(excelLayoutPath,jsonDirPath);
+  // 파일의 바이트 데이터를 읽음
+  var bytes = File(excelLayoutPath).readAsBytesSync();
+  // 엑셀로 로드
+  var excel = Excel.decodeBytes(bytes);
+
   final Sheet sheet = excel['Sheet1'];
 
+
+
+
+
   // 헤더 정의 후, 시트에 저장
-  List<String> headers = ['위치', '분류', '상세위치', '하자내용', '비고'];
-  addHeadersToSheet(sheet, headers);
+  // List<String> headers = ['위치', '분류', '상세위치', '하자내용', '비고'];
+  // addHeadersToSheet(sheet, headers);
 
   // JSON 파일 엑셀데이터로 취합
   await processJsonFiles(jsonDirectory, sheet, folderName);
@@ -326,6 +357,12 @@ Future<void> processJsonFiles(Directory directory, Sheet sheet, String folderNam
   final jsonFiles = directory.listSync().where((element) => element.path.endsWith('.json'));
   final pictureDirectory = Directory('/storage/emulated/0/Pictures/prj_$folderName');
 
+  int nameRow = 2;
+  int nameColumn = 1;
+  var nameCellIndex = CellIndex.indexByColumnRow(columnIndex: nameColumn, rowIndex: nameRow); // A1 셀
+  sheet.updateCell(nameCellIndex, "${folderName} 공사 체크리스트");
+
+  int dataStartRow = 7;
   for (final file in jsonFiles) {
     String fileName = path.basename(file.path);
     String imageFilePath = path.join(pictureDirectory.path, fileName.replaceAll('.json', '.png'));
@@ -334,7 +371,30 @@ Future<void> processJsonFiles(Directory directory, Sheet sheet, String folderNam
     if (await imageFile.exists()) {
       final jsonContent = await File(file.path).readAsString();
       final Map<String, dynamic> jsonData = jsonDecode(jsonContent);
-      sheet.appendRow(jsonData.values.toList());
+
+      List jsonDataList = jsonData.values.toList();
+      // sheet.appendRow(jsonData.values.toList());
+
+
+
+
+
+      int dataStartColumn = 1;
+      for(int i = 0; i < jsonDataList.length; i++){
+        var dataCellIndex = CellIndex.indexByColumnRow(columnIndex: dataStartColumn + i, rowIndex: dataStartRow);
+        sheet.updateCell(dataCellIndex, jsonDataList[i]);
+        print("${jsonDataList[i]} 데이터 배치중");
+      }
+      dataStartRow += 1;
+
+
+
+
+
+
+
+
+
     } else {
       print('No image file corresponding to the JSON file was found. Deleting JSON file: ${file.path}');
       await file.delete();
