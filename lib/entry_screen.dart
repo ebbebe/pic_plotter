@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard_screen.dart';  // DashboardScreen 위젯을 import
 import 'package:permission_handler/permission_handler.dart';
 import 'package:excel/excel.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as path;
 
 class EntryScreen extends StatelessWidget {
@@ -74,7 +77,7 @@ class EntryScreen extends StatelessWidget {
                       trailing: IconButton(
                         icon: Icon(Icons.document_scanner),  // 아이콘 버튼에 사용할 아이콘을 지정합니다.
                         onPressed: () {
-                          exportDataToExcel(folderName);
+                          exportDataToExcelNew(folderName);
                         },
                       ),
                     ),
@@ -292,60 +295,110 @@ class EntryScreen extends StatelessWidget {
 
     return folderNames;
   }
-
 }
 
+Future<String> copyAssetExcelToFile(String assetExcelPath, String targetFolderPath, String targetFileName) async {
+  try {
+    // 에셋에서 엑셀 파일의 바이트 데이터를 로드합니다.
+    final byteData = await rootBundle.load(assetExcelPath);
+    final buffer = byteData.buffer;
 
-Future<void> copyExcelFile(String sourcePath, String targetPath) async {
-  // 원본 파일 객체 생성
-  final File sourceFile = File(sourcePath);
+    // 새 파일의 경로를 지정합니다.
+    final String fullPath = '$targetFolderPath/$targetFileName';
 
-  // 파일 존재 여부 확인
-  if (await sourceFile.exists()) {
-    try {
-      // 파일을 새 경로로 복사
-      await sourceFile.copy(targetPath);
-      print('파일이 성공적으로 복사되었습니다: $targetPath');
-    } catch (e) {
-      // 에러 핸들링
-      print('파일을 복사하는 중 에러가 발생했습니다: $e');
+    // 특정 폴더 경로가 존재하는지 확인하고, 없다면 생성합니다.
+    print("테스트: assetExcelPath: ${assetExcelPath}");
+    print("테스트: targetFolderPath: ${targetFolderPath}");
+    print("테스트: targetFileName: ${targetFileName}");
+    print("테스트: fullPath: ${fullPath}");
+    final Directory targetDirectory = Directory(targetFolderPath);
+    if (!await targetDirectory.exists()) {
+      await targetDirectory.create(recursive: true);
     }
-  } else {
-    print('원본 파일이 존재하지 않습니다: $sourcePath');
+
+    // 새 파일을 생성하고 바이트 데이터를 씁니다.
+    final file = File(fullPath);
+
+    // 파일이 이미 존재하는 경우를 확인하고, 덮어쓰기 여부를 결정
+    if (await file.exists()) {
+      print('파일이 이미 존재합니다. 덮어쓰기를 진행합니다.');
+    }
+
+    await file.writeAsBytes(buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes));
+
+    print('Excel file copied to $fullPath');
+    return fullPath;
+  } catch (e) {
+    print('Error copying excel file: $e');
+    return '$e';
   }
 }
 
-Future<void> exportDataToExcel(String folderName) async {
-  // 저장소 설정
-  final baseDirectoryPath = '/storage/emulated/0/Documents/PicPlotter';
-  final jsonDirectory = Directory('$baseDirectoryPath/$folderName');
-  // final excel = Excel.createExcel();
-
-  final jsonDirPath = '/storage/emulated/0/Documents/PicPlotter/$folderName';
-  final excelLayoutPath = '/storage/emulated/0/Documents/PicPlotter/excel_layout.xlsx';
-
-  copyExcelFile(excelLayoutPath,jsonDirPath);
-  // 파일의 바이트 데이터를 읽음
-  var bytes = File(excelLayoutPath).readAsBytesSync();
-  // 엑셀로 로드
-  var excel = Excel.decodeBytes(bytes);
-
-  final Sheet sheet = excel['Sheet1'];
 
 
 
 
 
-  // 헤더 정의 후, 시트에 저장
-  // List<String> headers = ['위치', '분류', '상세위치', '하자내용', '비고'];
-  // addHeadersToSheet(sheet, headers);
+Future<void> copyExcelFile(String folderName) async {
+  try {
+    // 앱의 문서 디렉토리 경로를 얻습니다.
+    final directory = await getApplicationDocumentsDirectory();
+    final filePath = '${directory.path}/PicPlotter/excel_layout.xlsx';
 
-  // JSON 파일 엑셀데이터로 취합
-  await processJsonFiles(jsonDirectory, sheet, folderName);
+    // 원본 파일 인스턴스를 생성합니다.
+    final originalFile = File(filePath);
 
-  // 엑셀 파일 저장
-  await saveExcelFile(jsonDirectory, folderName, excel);
+    // 복사본 파일 경로를 설정합니다. 여기서는 같은 디렉토리에 '_copy'를 붙여 새 이름을 생성합니다.
+    final newFileName = '${directory.path}/PicPlotter/${folderName}/${folderName}.xlsx';
+    final newFile = File(newFileName);
+
+    // 파일 복사를 시도합니다.
+    await originalFile.copy(newFile.path);
+
+    print('File copied to $newFileName');
+  } catch (e) {
+    print('Error copying file: $e');
+    // 에러 처리를 적절히 수행합니다.
+  }
 }
+
+
+// 사용자가 선택한 폴더에서 JSON 데이터를 Excel 파일로 변환하는 함수
+Future<void> exportDataToExcel(String folderName) async {
+  final appDocDir = await getApplicationDocumentsDirectory();
+  final appDocPath = appDocDir.path;
+  final dataDirectory = Directory('$appDocPath/$folderName');
+  final excelFilePath = '$appDocPath/$folderName.xlsx';
+
+  // Excel 파일이 이미 존재하는지 확인합니다. 없으면 새로 생성합니다.
+  var excel = File(excelFilePath).existsSync() ? await loadExcelFile(excelFilePath) : Excel.createExcel();
+  var sheetName = 'Sheet1';
+
+  // JSON 파일을 처리하고 Excel 파일로 저장합니다.
+  await processJsonFiles(dataDirectory, excel, sheetName);
+}
+
+// 사용자가 선택한 폴더에서 JSON 데이터를 Excel 파일로 변환하는 함수
+Future<void> exportDataToExcelNew(String folderName) async {
+  String assetPath = 'assets/excel_layout.xlsx';
+  String targetPath = '/storage/emulated/0/Documents/PicPlotter/${folderName}';
+  Directory targetDirectory = Directory(targetPath);
+  String excelFilePath = await copyAssetExcelToFile(assetPath, targetPath, '${folderName}.xlsx');
+  print('excelFilePath: ${excelFilePath}');
+  Excel excel = await loadExcelFile(excelFilePath);
+  processJsonFiles(targetDirectory, excel, folderName);
+}
+
+
+
+
+Future<Excel> loadExcelFile(String filePath) async {
+  var bytes = await File(filePath).readAsBytes(); // 비동기식으로 파일 읽기
+  var excel = Excel.decodeBytes(bytes);
+  return excel;
+}
+
+
 
 void addHeadersToSheet(Sheet sheet, List<String> headers) {
   for (int i = 0; i < headers.length; i++) {
@@ -353,66 +406,49 @@ void addHeadersToSheet(Sheet sheet, List<String> headers) {
   }
 }
 
-Future<void> processJsonFiles(Directory directory, Sheet sheet, String folderName) async {
-  final jsonFiles = directory.listSync().where((element) => element.path.endsWith('.json'));
-  final pictureDirectory = Directory('/storage/emulated/0/Pictures/prj_$folderName');
+// JSON 파일을 처리하고 Excel 시트에 데이터를 추가하는 함수
+Future<void> processJsonFiles(Directory directory, Excel excel, String folderName) async {
 
+
+  // json 파일들 로드
+  final jsonFiles = directory.listSync().where((element) => element.path.endsWith('.json')).toList();
+
+  // 엑셀파일 열기
+  var allSheets = excel.tables.keys;
+
+  // 첫 번째 시트의 이름을 가져옵니다.
+  String firstSheetName = allSheets.elementAt(0);
+
+  // 첫 번째 시트를 참조합니다.
+  var sheet = excel.tables[firstSheetName];
+
+  // 엑셀파일 수정
   int nameRow = 2;
   int nameColumn = 1;
   var nameCellIndex = CellIndex.indexByColumnRow(columnIndex: nameColumn, rowIndex: nameRow); // A1 셀
-  sheet.updateCell(nameCellIndex, "${folderName} 공사 체크리스트");
-
-  int dataStartRow = 7;
-  for (final file in jsonFiles) {
-    String fileName = path.basename(file.path);
-    String imageFilePath = path.join(pictureDirectory.path, fileName.replaceAll('.json', '.png'));
-    final imageFile = File(imageFilePath);
-
-    if (await imageFile.exists()) {
-      final jsonContent = await File(file.path).readAsString();
-      final Map<String, dynamic> jsonData = jsonDecode(jsonContent);
-
-      List jsonDataList = jsonData.values.toList();
-      // sheet.appendRow(jsonData.values.toList());
+  sheet!.updateCell(nameCellIndex, "${folderName} 공사 체크리스트");
 
 
 
+  // int startRow = 0; // 데이터를 쓸 시작 행입니다.
+  // for (var jsonFile in jsonFiles) {
+  //   final Map<String, dynamic> json = jsonDecode(await File(jsonFile.path).readAsString());
+  //   // JSON 구조를 토대로 데이터를 시트에 추가하는 코드...
+  //   startRow++;
+  // }
 
 
-      int dataStartColumn = 1;
-      for(int i = 0; i < jsonDataList.length; i++){
-        var dataCellIndex = CellIndex.indexByColumnRow(columnIndex: dataStartColumn + i, rowIndex: dataStartRow);
-        sheet.updateCell(dataCellIndex, jsonDataList[i]);
-        print("${jsonDataList[i]} 데이터 배치중");
-      }
-      dataStartRow += 1;
-
-
-
-
-
-
-
-
-
-    } else {
-      print('No image file corresponding to the JSON file was found. Deleting JSON file: ${file.path}');
-      await file.delete();
-    }
-  }
+  // 엑셀 저장
+  saveExcelFile(directory, folderName, excel);
 }
 
-Future<void> saveExcelFile(Directory directory, String folderName, Excel excel) async {
-  final String excelFileName = '$folderName.xlsx';
-  final String excelFilePath = '${directory.path}/$excelFileName';
-  final File excelFile = File(excelFilePath);
-
-  if (!await excelFile.exists()) {
-    await excelFile.create(recursive: true);
-  }
-  await excelFile.writeAsBytes(excel.encode()!);
-
-  showExcelFileSavedToast();
+// 변경사항을 적용한 Excel 파일을 저장하는 함수
+Future<void> saveExcelFile(Directory directory, String fileName, Excel excel) async {
+  String outputFile = path.join(directory.path, '$fileName.xlsx');
+  File(outputFile)
+    ..createSync(recursive: true)
+    ..writeAsBytesSync(excel.encode()!);
+  print('Excel file saved: $outputFile');
 }
 
 void showExcelFileSavedToast() {

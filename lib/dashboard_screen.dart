@@ -18,7 +18,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path/path.dart' as path;
 import 'package:file_picker/file_picker.dart';
-
+//TODO 1. 쓸데없는 엑셀 출력기능 전부 지우고 json파일 압축기능만 추가
+//TODO 2. 엑셀파일 출력은 PC에서 진행
 
 class DashboardScreen extends StatefulWidget {
   final String inputText;
