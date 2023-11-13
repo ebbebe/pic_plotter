@@ -18,8 +18,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path/path.dart' as path;
 import 'package:file_picker/file_picker.dart';
-//TODO 1. 쓸데없는 엑셀 출력기능 전부 지우고 json파일 압축기능만 추가
-//TODO 2. 엑셀파일 출력은 PC에서 진행
+
 
 class DashboardScreen extends StatefulWidget {
   final String inputText;
@@ -200,6 +199,7 @@ class _DashBoardScreenState extends State<DashboardScreen> {
     // JSON 파일 경로 생성 (이미지와 동일한 이름 사용)
     String jsonFilePath = '/storage/emulated/0/Documents/PicPlotter/${widget.inputText}/${widget.imageAndExcelFilename}.json';
 
+
     // JSON 파일 저장
     File(jsonFilePath).writeAsString(jsonTextData);
     print('텍스트 데이터가 JSON 파일로 저장되었습니다: $jsonFilePath');
@@ -244,6 +244,52 @@ class _DashBoardScreenState extends State<DashboardScreen> {
     // 이미지와 관련된 텍스트 데이터를 JSON 파일로 저장
     await saveTextDataAsJson();
   }
+
+  Future<String> _getStackedImageName(String fileName) async {
+    // 동일 이름 카운트 함수
+
+    final directoryPath = (await getApplicationDocumentsDirectory()).path;
+
+    // 파일이 존재하는지 확인하고 접미사 추가
+    int count = 0;
+    while (File('$directoryPath/$fileName.png').existsSync()) {
+      count++;
+      fileName = '${fileName}_$count';
+    }
+
+    return fileName;
+  }
+
+  Future<void> _saveImageAndJson() async {
+  }
+
+  Future<void> saveImage(String imageName) async {
+    if (_image == null) {
+      print('이미지가 선택되지 않았습니다.');
+      return;
+    }
+
+    // 새로운 이미지 파일명 생성
+    String stackedImageName = await _getStackedImageName(imageName);
+
+    // 저장할 경로 설정
+    final directoryPath = (await getApplicationDocumentsDirectory()).path;
+    String newImagePath = '$directoryPath/$stackedImageName.png';
+
+    
+    // 원본 이미지 파일을 새로운 이름으로 복사
+    File newImageFile = await _image!.copy(newImagePath);
+
+    // GallerySaver를 사용하여 새로운 이미지 파일 저장
+    GallerySaver.saveImage(newImageFile.path, albumName: 'prj_${widget.inputText}').then((bool? success) {
+      if (success != null && success) {
+        print('이미지가 갤러리에 저장되었습니다: $newImagePath');
+      } else {
+        print('갤러리에 이미지 저장 실패');
+      }
+    });
+  }
+
 
 
 
@@ -506,7 +552,7 @@ class _DashBoardScreenState extends State<DashboardScreen> {
               IconButton(
                 icon: Icon(Icons.check),
                 onPressed: () async {
-                  _saveImageAndTextData();
+                  saveImage(_controllers[1].text);
                   print('check icon pressedd');
                 },
               ),

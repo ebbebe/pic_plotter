@@ -8,15 +8,34 @@ import 'package:fluttertoast/fluttertoast.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dashboard_screen.dart';  // DashboardScreen 위젯을 import
+import 'dashboard_screen.dart'; // DashboardScreen 위젯을 import
 import 'package:permission_handler/permission_handler.dart';
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as path;
+import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
+//TODO 1. 쓸데없는 엑셀 출력기능 전부 지우고 json파일 압축기능만 추가
+//TODO 2. 엑셀파일 출력은 PC에서 진행
+//TODO 3. no item data 없애기
+//TODO 4. 메뉴 권한 부여 에러
 
-class EntryScreen extends StatelessWidget {
+
+
+class EntryScreen extends StatefulWidget {
+  @override
+  State<EntryScreen> createState() => _EntryScreenState();
+}
+
+class _EntryScreenState extends State<EntryScreen> {
   final TextEditingController _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    requestAllPermissions();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +47,8 @@ class EntryScreen extends StatelessWidget {
         backgroundColor: Color(0xFFFAFAFA),
         bottom: PreferredSize(
           child: Container(
-            color: Colors.grey[300],  // 경계선의 색상을 설정합니다.
-            height: 0.5,  // 경계선의 높이를 설정합니다.
+            color: Colors.grey[300], // 경계선의 색상을 설정합니다.
+            height: 0.5, // 경계선의 높이를 설정합니다.
           ),
           preferredSize: Size.fromHeight(0.5),
         ),
@@ -39,7 +58,8 @@ class EntryScreen extends StatelessWidget {
         // Drawer의 child 프로퍼티
         child: FutureBuilder<List<String>>(
           future: findFoldersContainingString(context), // 비동기 함수 호출
-          builder: (BuildContext context, AsyncSnapshot<List<String>> snapshot) {
+          builder:
+              (BuildContext context, AsyncSnapshot<List<String>> snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               // 로딩 상태일 때의 UI
               return CircularProgressIndicator();
@@ -70,14 +90,15 @@ class EntryScreen extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => DashboardScreen(inputText: folderName),
+                            builder: (context) =>
+                                DashboardScreen(inputText: folderName),
                           ),
                         );
                       },
                       trailing: IconButton(
-                        icon: Icon(Icons.document_scanner),  // 아이콘 버튼에 사용할 아이콘을 지정합니다.
+                        icon: Icon(Icons.folder_zip), // 아이콘 버튼에 사용할 아이콘을 지정합니다.
                         onPressed: () {
-                          exportDataToExcelNew(folderName);
+                          zipJsonFilesInDirectory(folderName);
                         },
                       ),
                     ),
@@ -117,7 +138,7 @@ class EntryScreen extends StatelessWidget {
                 border: OutlineInputBorder(),
               ),
             ),
-            SizedBox(height: 20),  // TextField와 버튼 사이에 간격을 추가
+            SizedBox(height: 20), // TextField와 버튼 사이에 간격을 추가
             ElevatedButton(
               child: Text('입력'),
               onPressed: () => _handleRequest(context),
@@ -167,8 +188,8 @@ class EntryScreen extends StatelessWidget {
 
       if (selectedDirectory != null) {
         // 'PicPlotter' 폴더 내에 텍스트필드 값으로 하위 폴더를 생성합니다.
-        final String subFolderPath = path.join(
-            selectedDirectory, _controller.text);
+        final String subFolderPath =
+            path.join(selectedDirectory, _controller.text);
         final Directory subFolder = Directory(subFolderPath);
         if (!await subFolder.exists()) {
           await subFolder.create(recursive: true);
@@ -187,6 +208,7 @@ class EntryScreen extends StatelessWidget {
       }
     }
   }
+
   void _showDialogAndExit(BuildContext context, String msg) {
     showDialog(
       context: context,
@@ -204,7 +226,8 @@ class EntryScreen extends StatelessWidget {
                 if (Platform.isAndroid) {
                   SystemNavigator.pop(); // 앱을 종료합니다.
                 } else if (Platform.isIOS) {
-                  exit(0); // iOS에서는 SystemNavigator.pop()이 동작하지 않으므로 exit를 사용합니다.
+                  exit(
+                      0); // iOS에서는 SystemNavigator.pop()이 동작하지 않으므로 exit를 사용합니다.
                 }
               },
             ),
@@ -214,7 +237,8 @@ class EntryScreen extends StatelessWidget {
     );
   }
 
-  void _showDialog(BuildContext context, String msg, VoidCallback onConfirmed) async {
+  void _showDialog(
+      BuildContext context, String msg, VoidCallback onConfirmed) async {
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -265,202 +289,112 @@ class EntryScreen extends StatelessWidget {
   Future<List<String>> findFoldersContainingString(BuildContext context) async {
     List<String> folderNames = [];
 
-    // PicPlotter 폴더 생성했는지 확인
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    bool hasParentFolderBeenCreated = prefs.getBool('hasParentFolderBeenCreated') ?? false;
+    // 저장 권한의 현재 상태를 확인합니다.
+    var storageStatus = await Permission.storage.status;
 
-    if(!hasParentFolderBeenCreated){
-      _tryCreatingFolder(context);
+    // 권한이 아직 부여되지 않았다면 사용자에게 요청합니다.
+    if (!storageStatus.isGranted) {
+      storageStatus = await Permission.storage.request();
+      if (!storageStatus.isGranted) {
+        // 권한이 거부되었다면 경고 메시지를 표시하고 함수를 종료합니다.
+        _showDialogAndExit(context, '설정>애플리케이션>해당어플>권한 으로 이동하여 앱권한 설정을 진행해주세요.');
+        return [];
+      }
     }
 
-    // 저장 권한 요청
-    var storageStatus = await Permission.storage.request();
-    if (storageStatus.isGranted) {
-      //폴더의 경로를 가져옵니다.
-      final Directory targetDirectory = Directory('/storage/emulated/0/Documents/PicPlotter');
+    // PicPlotter 폴더 생성했는지 확인
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    bool hasParentFolderBeenCreated =
+        prefs.getBool('hasParentFolderBeenCreated') ?? false;
 
-      // 상위 디렉토리에서 모든 엔티티를 나열합니다.
-      List<FileSystemEntity> entities = await targetDirectory.list().toList();
+    if (!hasParentFolderBeenCreated) {
+      _tryCreatingFolder(context);
+    }
+    //폴더의 경로를 가져옵니다.
+    final Directory targetDirectory =
+    Directory('/storage/emulated/0/Documents/PicPlotter');
 
-      for(FileSystemEntity entity in entities){
-        String folderName = entity.path.split('/').last;
-        folderNames.add(folderName);
-        print('entity: ${folderName}');
-      }
+    // 상위 디렉토리에서 모든 엔티티를 나열합니다.
+    List<FileSystemEntity> entities = await targetDirectory.list().toList();
 
-    } else {
-      _showDialogAndExit(context, '설정>애플리케이션>해당어플>권한 으로 이동하여 앱권한 설정을 진행해주세요.');
-      print('Storage Permission Denied');
+    for (FileSystemEntity entity in entities) {
+      String folderName = entity.path.split('/').last;
+      folderNames.add(folderName);
+      print('entity: ${folderName}');
     }
 
     return folderNames;
   }
 }
 
-Future<String> copyAssetExcelToFile(String assetExcelPath, String targetFolderPath, String targetFileName) async {
-  try {
-    // 에셋에서 엑셀 파일의 바이트 데이터를 로드합니다.
-    final byteData = await rootBundle.load(assetExcelPath);
-    final buffer = byteData.buffer;
+Future<void> zipJsonFilesInDirectory(String folderName) async {
+  //폴더의 경로를 가져옵니다.
+  final directory =
+      Directory('/storage/emulated/0/Documents/PicPlotter/$folderName');
+  final archive = Archive();
 
-    // 새 파일의 경로를 지정합니다.
-    final String fullPath = '$targetFolderPath/$targetFileName';
+  // 디렉토리 내의 모든 파일들을 나열합니다.
+  List<FileSystemEntity> files = await directory.list().toList();
 
-    // 특정 폴더 경로가 존재하는지 확인하고, 없다면 생성합니다.
-    print("테스트: assetExcelPath: ${assetExcelPath}");
-    print("테스트: targetFolderPath: ${targetFolderPath}");
-    print("테스트: targetFileName: ${targetFileName}");
-    print("테스트: fullPath: ${fullPath}");
-    final Directory targetDirectory = Directory(targetFolderPath);
-    if (!await targetDirectory.exists()) {
-      await targetDirectory.create(recursive: true);
+  print("압축할 파일 목록: \n ${files.toList()}");
+  print("directory: \n ${directory.path}");
+  // JSON 파일이 있는지 확인합니다.
+  bool hasJsonFiles =
+      files.any((file) => file is File && file.path.endsWith('.json'));
+
+  if (!hasJsonFiles) {
+    // JSON 파일이 없으면 함수를 종료합니다.
+    showMsgToast('압축할 파일이 존재하지 않습니다.');
+    return;
+  }
+
+  for (final file in files) {
+    if (file is File && file.path.endsWith('.json')) {
+      // JSON 파일을 읽어 압축 파일에 추가합니다.
+      final data = await file.readAsBytes();
+      final filename = file.path.split("/").last;
+      archive.addFile(ArchiveFile(filename, data.length, data));
     }
 
-    // 새 파일을 생성하고 바이트 데이터를 씁니다.
-    final file = File(fullPath);
+    // ZIP 파일을 생성합니다.
+    final zipData = ZipEncoder().encode(archive);
 
-    // 파일이 이미 존재하는 경우를 확인하고, 덮어쓰기 여부를 결정
-    if (await file.exists()) {
-      print('파일이 이미 존재합니다. 덮어쓰기를 진행합니다.');
-    }
 
-    await file.writeAsBytes(buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes));
 
-    print('Excel file copied to $fullPath');
-    return fullPath;
-  } catch (e) {
-    print('Error copying excel file: $e');
-    return '$e';
+    // ZIP 파일을 디스크에 저장합니다.
+    final zipFilePath = '${directory.path}/$folderName.zip';
+    File(zipFilePath)
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(zipData!);
   }
 }
 
-
-
-
-
-
-Future<void> copyExcelFile(String folderName) async {
-  try {
-    // 앱의 문서 디렉토리 경로를 얻습니다.
-    final directory = await getApplicationDocumentsDirectory();
-    final filePath = '${directory.path}/PicPlotter/excel_layout.xlsx';
-
-    // 원본 파일 인스턴스를 생성합니다.
-    final originalFile = File(filePath);
-
-    // 복사본 파일 경로를 설정합니다. 여기서는 같은 디렉토리에 '_copy'를 붙여 새 이름을 생성합니다.
-    final newFileName = '${directory.path}/PicPlotter/${folderName}/${folderName}.xlsx';
-    final newFile = File(newFileName);
-
-    // 파일 복사를 시도합니다.
-    await originalFile.copy(newFile.path);
-
-    print('File copied to $newFileName');
-  } catch (e) {
-    print('Error copying file: $e');
-    // 에러 처리를 적절히 수행합니다.
-  }
-}
-
-
-// 사용자가 선택한 폴더에서 JSON 데이터를 Excel 파일로 변환하는 함수
-Future<void> exportDataToExcel(String folderName) async {
-  final appDocDir = await getApplicationDocumentsDirectory();
-  final appDocPath = appDocDir.path;
-  final dataDirectory = Directory('$appDocPath/$folderName');
-  final excelFilePath = '$appDocPath/$folderName.xlsx';
-
-  // Excel 파일이 이미 존재하는지 확인합니다. 없으면 새로 생성합니다.
-  var excel = File(excelFilePath).existsSync() ? await loadExcelFile(excelFilePath) : Excel.createExcel();
-  var sheetName = 'Sheet1';
-
-  // JSON 파일을 처리하고 Excel 파일로 저장합니다.
-  await processJsonFiles(dataDirectory, excel, sheetName);
-}
-
-// 사용자가 선택한 폴더에서 JSON 데이터를 Excel 파일로 변환하는 함수
-Future<void> exportDataToExcelNew(String folderName) async {
-  String assetPath = 'assets/excel_layout.xlsx';
-  String targetPath = '/storage/emulated/0/Documents/PicPlotter/${folderName}';
-  Directory targetDirectory = Directory(targetPath);
-  String excelFilePath = await copyAssetExcelToFile(assetPath, targetPath, '${folderName}.xlsx');
-  print('excelFilePath: ${excelFilePath}');
-  Excel excel = await loadExcelFile(excelFilePath);
-  processJsonFiles(targetDirectory, excel, folderName);
-}
-
-
-
-
-Future<Excel> loadExcelFile(String filePath) async {
-  var bytes = await File(filePath).readAsBytes(); // 비동기식으로 파일 읽기
-  var excel = Excel.decodeBytes(bytes);
-  return excel;
-}
-
-
-
-void addHeadersToSheet(Sheet sheet, List<String> headers) {
-  for (int i = 0; i < headers.length; i++) {
-    sheet.updateCell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0), headers[i]);
-  }
-}
-
-// JSON 파일을 처리하고 Excel 시트에 데이터를 추가하는 함수
-Future<void> processJsonFiles(Directory directory, Excel excel, String folderName) async {
-
-
-  // json 파일들 로드
-  final jsonFiles = directory.listSync().where((element) => element.path.endsWith('.json')).toList();
-
-  // 엑셀파일 열기
-  var allSheets = excel.tables.keys;
-
-  // 첫 번째 시트의 이름을 가져옵니다.
-  String firstSheetName = allSheets.elementAt(0);
-
-  // 첫 번째 시트를 참조합니다.
-  var sheet = excel.tables[firstSheetName];
-
-  // 엑셀파일 수정
-  int nameRow = 2;
-  int nameColumn = 1;
-  var nameCellIndex = CellIndex.indexByColumnRow(columnIndex: nameColumn, rowIndex: nameRow); // A1 셀
-  sheet!.updateCell(nameCellIndex, "${folderName} 공사 체크리스트");
-
-
-
-  // int startRow = 0; // 데이터를 쓸 시작 행입니다.
-  // for (var jsonFile in jsonFiles) {
-  //   final Map<String, dynamic> json = jsonDecode(await File(jsonFile.path).readAsString());
-  //   // JSON 구조를 토대로 데이터를 시트에 추가하는 코드...
-  //   startRow++;
-  // }
-
-
-  // 엑셀 저장
-  saveExcelFile(directory, folderName, excel);
-}
-
-// 변경사항을 적용한 Excel 파일을 저장하는 함수
-Future<void> saveExcelFile(Directory directory, String fileName, Excel excel) async {
-  String outputFile = path.join(directory.path, '$fileName.xlsx');
-  File(outputFile)
-    ..createSync(recursive: true)
-    ..writeAsBytesSync(excel.encode()!);
-  print('Excel file saved: $outputFile');
-}
-
-void showExcelFileSavedToast() {
+void showMsgToast(String msg) {
   Fluttertoast.showToast(
-      msg: "엑셀 파일이 저장되었습니다.",
+      msg: msg,
       toastLength: Toast.LENGTH_SHORT,
       gravity: ToastGravity.BOTTOM,
       timeInSecForIosWeb: 1,
       backgroundColor: Colors.black,
       textColor: Colors.white,
-      fontSize: 16.0
-  );
+      fontSize: 16.0);
 }
 
+Future<void> requestAllPermissions() async {
+  // 필요한 권한을 나열합니다.
+  List<Permission> permissions = [
+    Permission.storage,
+    Permission.manageExternalStorage
+    // 필요한 다른 권한들도 여기에 추가할 수 있습니다.
+  ];
 
+  // 모든 권한을 요청합니다.
+  await Future.forEach(permissions, (Permission permission) async {
+    var status = await permission.status;
+    if (!status.isGranted) {
+      await permission.request();
+    }
+  });
+
+  print("All permissions requested.");
+}
