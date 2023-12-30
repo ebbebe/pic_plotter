@@ -15,13 +15,15 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
   final TextEditingController _controller = TextEditingController();
   late List<String> _keywords = [];
   int _selectedItemIndex = -1; // 선택된 아이템의 인덱스, 초기값은 -1로 설정
+  String _selectedItemText = '';
+
 
   late Map<String, dynamic> _keywordsMap = {
+    '공간': [],
     '위치': [],
+    '상세': [],
     '분류': [],
-    '상세위치': [],
-    '하자내용': [],
-    '비고': []
+    '내용': []
   };
 
   @override
@@ -35,11 +37,12 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
   _saveKeywords(String value) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    if (_keywords.length > 20) {
-      _keywords.removeAt(0);
-    }
+    // if (_keywords.length > 20) {
+    //   _keywords.removeAt(0);
+    // }
     _keywords.add(value);
-
+    print('pic_ _keywords값 확인: $_keywords');
+    print('pic_ widget.settingMenu: ${widget.settingMenu}');
     if (_keywordsMap != null) {
       if (_keywordsMap.containsKey(widget.settingMenu)) {
         _keywordsMap[widget.settingMenu] = _keywords;
@@ -58,13 +61,18 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
     if (jsonString != null) {
       _keywordsMap = json.decode(jsonString);
     }
+
+    print("pic_ _keywordsMap값: $_keywordsMap");
   }
 
   _loadKeywords() async {
+    print("pic_ _loadKeywords()함수 실행됨");
     _keywords = await _getKeywords();
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? selectedText = prefs.getString(widget.settingMenu);
 
+
+    // 아이템 선택 효과
     if (selectedText != null && _keywords.contains(selectedText)) {
       _selectedItemIndex = _keywords.indexOf(selectedText);
     }
@@ -88,16 +96,27 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
   }
 
   void _onItemTapped(int index) {
+    bool isKeywordChanged = false;
+
     setState(() {
       // 선택된 아이템 토글 (클릭 시 선택 <-> 선택 해제)
       if (_selectedItemIndex == index) {
-        _selectedItemIndex = -1; // 선택 해제
+        _selectedItemIndex = -1;
+        _selectedItemText = '';
       } else {
-        _selectedItemIndex = index; // 선택
-        String selectedText = _keywords[index]; // 선택된 아이템의 텍스트 값을 가져옴
-        _saveSelectedText(widget.settingMenu, selectedText);
+        _selectedItemIndex = index;
+        _selectedItemText = _keywords[index];
+        _saveSelectedText(widget.settingMenu, _selectedItemText);
       }
+      isKeywordChanged = true;
     });
+
+    // 키워드 저장 후 이전 화면 (메인 화면)으로 돌아감
+    if(isKeywordChanged){
+      Navigator.pop(context, widget.settingMenu);
+    }else{
+      Navigator.pop(context);
+    }
   }
 
   _saveSelectedText(String key, String value) async {
@@ -161,10 +180,11 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
+            child: ReorderableListView.builder(
               itemCount: _keywords.length,
               itemBuilder: (context, index) {
                 return ListTile(
+                  key: ValueKey(_keywords[index]), // 중요: 각 아이템에 고유한 키를 제공합니다.
                   title: Text('${_keywords[index]}'),
                   tileColor:
                       _selectedItemIndex == index ? Colors.blue[200] : null,
@@ -189,10 +209,41 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
                   ),
                 );
               },
+              onReorder: (int oldIndex, int newIndex) {
+                setState(() {
+                  if (newIndex > oldIndex) {
+                    newIndex -= 1;
+                  }
+                  final item = _keywords.removeAt(oldIndex);
+                  _keywords.insert(newIndex, item);
+
+                  // 선택된 아이템의 새 인덱스를 찾습니다.
+                  if (item == _selectedItemText) {
+                    _selectedItemIndex = newIndex;
+                  } else if (_selectedItemIndex == oldIndex) {
+                    _selectedItemIndex = newIndex;
+                  } else if (oldIndex < _selectedItemIndex && newIndex >= _selectedItemIndex) {
+                    _selectedItemIndex--;
+                  } else if (oldIndex > _selectedItemIndex && newIndex <= _selectedItemIndex) {
+                    _selectedItemIndex++;
+                  }
+
+                  // 변경된 키워드 목록을 저장
+                  _saveKeywordList();
+                });
+              },
+
             ),
           ),
         ],
       ),
     );
+  }
+
+  _saveKeywordList() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    _keywordsMap[widget.settingMenu] = _keywords;
+    String jsonString = json.encode(_keywordsMap);
+    await prefs.setString('keywordsMap', jsonString);
   }
 }

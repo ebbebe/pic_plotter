@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:outsourcing/entry_screen.dart';
 import 'package:outsourcing/keyword_setting_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,7 +20,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path/path.dart' as path;
 import 'package:file_picker/file_picker.dart';
-
+import 'package:image/image.dart' as img;
+import 'package:flutter_exif_rotation/flutter_exif_rotation.dart';
+import 'package:exif/exif.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String inputText;
@@ -32,269 +36,172 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashBoardScreenState extends State<DashboardScreen> {
   File? _image;
+  List<File> _images = []; // 여러 이미지 파일을 저장할 리스트
   double _rotationAngle = 0;
   Alignment _imageAlignment = Alignment.bottomLeft;
   final GlobalKey _globalKey = GlobalKey(); // RepaintBoundary 키 추가
+  bool _switchSingleMode = false;
+  double _imageQuality = 20; // 화질 조정을 위한 변수, 초기값을 50%로 설정
 
   List<TextEditingController> _controllers = List.generate(
     10,
     (index) => TextEditingController(),
   );
 
-  String _suggestedText = '';
-
   Map<String, List<String>> _keywordsMap = {
+    '공간': [],
     '위치': [],
+    '상세': [],
     '분류': [],
-    '상세위치': [],
-    '하자내용': [],
-    '비고': []
+    '내용': []
   };
-
 
   @override
   void initState() {
     super.initState();
-    _loadValues();
+    loadImageQualityPreference();
+    _loadAllValues();
     _loadKeywordsMap();
   }
 
-
-
-  Future<void> createFolderAndSaveExcel() async {
-    // 권한 확인 및 요청
-    var status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-    }
-
-
-    // 엑셀 파일 생성 및 데이터 쓰기
-    var excel = Excel.createExcel();
-    Sheet sheetObject = excel['Sheet1'];
-    sheetObject.cell(CellIndex.indexByString("A1")).value = "Example Data"; // 예시 데이터
-    // ... 데이터 추가 작업 ...
-
-    // 엑셀 파일 저장
-    String fileName = "${widget.imageAndExcelFilename}.xlsx"; // 파일 이름
-    String filePath = path.join('/storage/emulated/0/prj_${widget.inputText }', fileName);
-    File file = File(filePath);
-
-    // 파일에 엑셀 내용 쓰기
-    List<int>? excelBytes = excel.save();
-    if (excelBytes != null) {
-      await file.writeAsBytes(excelBytes);
-    } else {
-      // 적절한 예외 처리
-      print('Unable to save excel file because the byte data is null.');
-    }
-
-
-    print("File saved at $filePath");
-  }
-
-
-  void saveExcel() async {
-    // 권한 요청
-    var status = await Permission.storage.request();
-    if (status.isGranted) {
-      // 외부 저장소 경로 얻기
-      final directory = (await getExternalStorageDirectory())?.path;
-      String filePath = '$directory/${widget.inputText}'; // 원하는 폴더명 지정
-      final file = File('$filePath/my_excel_file.xlsx');
-
-      // 폴더가 없다면 생성
-      if (!await Directory(filePath).exists()) {
-        await Directory(filePath).create(recursive: true);
-      }
-
-      // 엑셀 파일 데이터
-      var bytes = <int>[]; // 엑셀 파일의 바이트 데이터를 여기에 넣으세요.
-
-      // 파일 저장
-      await file.writeAsBytes(bytes, flush: true);
-      print('파일이 저장되었습니다: $filePath/my_excel_file.xlsx');
-    } else {
-      print('저장 권한이 거부되었습니다.');
-    }
-  }
-
-
-
   _loadKeywordsMap() async {
+    // 키워드설정 화면에 저장된 키워드들 로드
     print("_loadKeywordsMap()");
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? jsonString = prefs.getString('keywordsMap');
+    print("jsonString: $jsonString");
     if (jsonString != null) {
       Map<String, dynamic> map = json.decode(jsonString);
       map.forEach((key, value) {
         _keywordsMap[key] = List<String>.from(value);
       });
       setState(() {});
-
-      print("_loadKeywordsMap() ${jsonString}");
-      print("_loadKeywordsMap() ${map.toString()}");
-      print("_loadKeywordsMap() ${_keywordsMap}");
-    }else{
+    } else {
       String jsonString = json.encode(_keywordsMap);
       prefs.setString('keywordsMap', jsonString);
       print("keywordsMap 존재하지 않아 새로 저장: ${jsonString}");
     }
-
   }
 
-  // Future<void> _saveImageWithTable() async {
-  //   print('Image saved');
-  //   RenderRepaintBoundary boundary = _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-  //   ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-  //   ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-  //   Uint8List pngBytes = byteData!.buffer.asUint8List();
-  //
-  //   final directoryPath = (await getApplicationDocumentsDirectory()).path;
-  //   String baseFileName = '${_controllers[1].text}';
-  //   String fileName = baseFileName;
-  //
-  //   // 파일이 존재하는지 확인하고 접미사 추가
-  //   int count = 0;
-  //   while (File('$directoryPath/$fileName.png').existsSync()) {
-  //     count++;
-  //     fileName = '${baseFileName}_$count';
-  //   }
-  //   widget.imageAndExcelFilename = fileName;
-  //
-  //   File imgFile = File('$directoryPath/$fileName.png');
-  //   await imgFile.writeAsBytes(pngBytes);
-  //
-  //   GallerySaver.saveImage(imgFile.path, albumName: 'prj_${widget.inputText}')
-  //       .then((bool? success) {
-  //     print('Image with table saved to gallery: ${imgFile.path}');
-  //     if (success!) {
-  //       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-  //         content: Text('파일이 성공적으로 저장되었습니다.'),
-  //         duration: Duration(seconds: 2),
-  //       ));
-  //     } else {
-  //       print('이미지 저장에 실패했습니다.');
-  //     }
-  //   });
-  //
-  //   createFolderAndSaveExcel();
-  // }
+  Future<void> saveImagesDataAsJson(List<String> baseFileNames) async {
+    //TODO 파일명 제대로 참조하게 바꿀 것
+    print('Pic_ saveImagesDataAsJson() baseFileNames 확인: $baseFileNames');
 
-
-
-  Future<void> saveTextDataAsJson() async {
-    // 텍스트 데이터 수집
-    Map<String, dynamic> textData = {
-      '위치': _controllers[1].text,
-      '분류': _controllers[3].text,
-      '상세위치': _controllers[5].text,
-      '하자내용': _controllers[7].text,
-      '비고': _controllers[9].text,
+    // JSON 데이터 생성
+    Map<String, dynamic> data = {
+      '공간': _controllers[1].text,
+      '위치': _controllers[3].text,
+      '상세': _controllers[5].text,
+      '분류': _controllers[7].text,
+      '내용': _controllers[9].text,
+      '파일명': baseFileNames,
     };
 
-    // JSON 형식으로 변환
-    String jsonTextData = jsonEncode(textData);
-
-    // JSON 파일 경로 생성 (이미지와 동일한 이름 사용)
-    String jsonFilePath = '/storage/emulated/0/Documents/PicPlotter/${widget.inputText}/${widget.imageAndExcelFilename}.json';
-
-
-    // JSON 파일 저장
-    File(jsonFilePath).writeAsString(jsonTextData);
-    print('텍스트 데이터가 JSON 파일로 저장되었습니다: $jsonFilePath');
+    // JSON 파일 경로 설정 및 저장
+    String jsonFilePath =
+        '/storage/emulated/0/Documents/PicPlotter/${widget.inputText}/${baseFileNames[0]}.json';
+    String jsonTextData = jsonEncode(data);
+    await File(jsonFilePath).writeAsString(jsonTextData);
+    print('Pic_ 이미지 데이터가 JSON 파일로 저장되었습니다: $jsonFilePath');
   }
 
-  Future<void> _saveImageAndTextData() async {
-    // 이미지 캡처 및 저장 로직
-    RenderRepaintBoundary boundary = _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-    ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-    ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    Uint8List pngBytes = byteData!.buffer.asUint8List();
+  Future<void> saveImageDataAsJpg(File image, String baseFileName) async {
+    // EXIF 정보를 확인하고 이미지를 올바른 방향으로 회전
+    File rotatedImage = await FlutterExifRotation.rotateAndSaveImage(path: image.path);
 
+    // _image에서 이미지 파일을 불러옵니다.
+    img.Image? originalImage = img.decodeImage(rotatedImage!.readAsBytesSync());
+    if (originalImage != null) {
+      // 해상도를 낮추기 위해 이미지 크기를 조정합니다.
+      int newWidth = (originalImage.width * 0.5).round(); // 원래 너비의 50%로 조정
+      int newHeight = (originalImage.height * 0.5).round(); // 원래 높이의 50%로 조정
+      img.Image resizedImage =
+          img.copyResize(originalImage, width: newWidth, height: newHeight);
 
-    final directoryPath = (await getApplicationDocumentsDirectory()).path;
-    String baseFileName = '${_controllers[1].text}';
-    String fileName = baseFileName;
+      // 이미지 화질 처리
+      int quality = _imageQuality.round(); // 화질 설정 적용
+      // JPG 형식으로 이미지를 변환합니다.
+      List<int> jpg = img.encodeJpg(resizedImage, quality: quality); // 품질 조정
 
-    // 파일이 존재하는지 확인하고 접미사 추가
-    int count = 0;
-    while (File('$directoryPath/$fileName.png').existsSync()) {
-      count++;
-      fileName = '${baseFileName}_$count';
+      // 변환된 이미지를 저장합니다.
+      String tempPath = (await getTemporaryDirectory()).path;
+      String newFileName = baseFileName + '.jpg';
+      File newFile = File('$tempPath/$newFileName')..writeAsBytesSync(jpg);
+
+      // 변환된 이미지를 갤러리에 저장합니다.
+      await GallerySaver.saveImage(newFile.path,
+              albumName: 'prj_${widget.inputText}')
+          .then((bool? success) {
+        if (success != null && success) {
+          showMsgToast('이미지가 갤러리에 저장되었습니다.');
+          print('Pic_ Image saved to gallery: ${newFile.path}');
+        } else {
+          showMsgToast('이미지가 저장에 실패하였습니다.');
+          print('Pic_ Failed to save image to gallery');
+        }
+      });
+
+      showMsgToast('이미지가 갤러리에 저장되었습니다.');
+      print("Pic_ Image and JSON saved at ${newFile.path}");
+    } else {
+      print('Pic_ No image selected or failed to load image.');
     }
-    widget.imageAndExcelFilename = fileName;
-
-    File imgFile = File('$directoryPath/$fileName.png');
-    await imgFile.writeAsBytes(pngBytes);
-
-    GallerySaver.saveImage(imgFile.path, albumName: 'prj_${widget.inputText}')
-        .then((bool? success) {
-      print('Image with table saved to gallery: ${imgFile.path}');
-      if (success!) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('파일이 성공적으로 저장되었습니다.'),
-          duration: Duration(seconds: 2),
-        ));
-      } else {
-        print('이미지 저장에 실패했습니다.');
-      }
-    });
-
-    // 이미지와 관련된 텍스트 데이터를 JSON 파일로 저장
-    await saveTextDataAsJson();
   }
 
-  Future<String> _getStackedImageName(String fileName) async {
+  Future<String> _getStackedImageName(
+      String targetDirPath, String fileName) async {
     // 동일 이름 카운트 함수
 
-    final directoryPath = (await getApplicationDocumentsDirectory()).path;
-
     // 파일이 존재하는지 확인하고 접미사 추가
+    String stackedFileName = fileName;
     int count = 0;
-    while (File('$directoryPath/$fileName.png').existsSync()) {
+    while (File('$targetDirPath/$stackedFileName.jpg').existsSync()) {
+      print("while문 돌아가는 중");
       count++;
-      fileName = '${fileName}_$count';
+      stackedFileName = '${fileName}_$count';
     }
 
-    return fileName;
+    return stackedFileName;
   }
 
-  Future<void> _saveImageAndJson() async {
-  }
-
-  Future<void> saveImage(String imageName) async {
-    if (_image == null) {
-      print('이미지가 선택되지 않았습니다.');
-      return;
+  Future<void> _loadValue(String FieldName) async {
+    print('_pic _loadValue() 함수 실행');
+    final prefs = await SharedPreferences.getInstance();
+    String value = '';
+    int index = -1;
+    switch (FieldName) {
+      case '공간':
+        index = 1;
+        value = prefs.getString('공간') ?? '';
+        break;
+      case '위치':
+        index = 3;
+        value = prefs.getString('위치') ?? '';
+        break;
+      case '상세':
+        index = 5;
+        value = prefs.getString('상세') ?? '';
+        break;
+      case '분류':
+        index = 7;
+        value = prefs.getString('분류') ?? '';
+        break;
+      case '내용':
+        index = 9;
+        value = prefs.getString('내용') ?? '';
+        break;
+      default:
+        value = '';
     }
 
-    // 새로운 이미지 파일명 생성
-    String stackedImageName = await _getStackedImageName(imageName);
+    if (index != -1 || value == '') {
+      _controllers[index].text = value;
 
-    // 저장할 경로 설정
-    final directoryPath = (await getApplicationDocumentsDirectory()).path;
-    String newImagePath = '$directoryPath/$stackedImageName.png';
-
-    
-    // 원본 이미지 파일을 새로운 이름으로 복사
-    File newImageFile = await _image!.copy(newImagePath);
-
-    // GallerySaver를 사용하여 새로운 이미지 파일 저장
-    GallerySaver.saveImage(newImageFile.path, albumName: 'prj_${widget.inputText}').then((bool? success) {
-      if (success != null && success) {
-        print('이미지가 갤러리에 저장되었습니다: $newImagePath');
-      } else {
-        print('갤러리에 이미지 저장 실패');
-      }
-    });
+      setState(() {});
+    }
   }
 
-
-
-
-
-  Future<void> _loadValues() async {
+  Future<void> _loadAllValues() async {
     final prefs = await SharedPreferences.getInstance();
 
     for (int i = 0; i < _controllers.length; i++) {
@@ -302,168 +209,332 @@ class _DashBoardScreenState extends State<DashboardScreen> {
 
       switch (i) {
         case 0:
-          value = '위치';
+          value = '공간';
           break;
         case 1:
-          value = prefs.getString('위치') ?? ''; // SharedPreferences에서 값을 가져올 때, 값이 null이면 빈 문자열을 대신 사용합니다.
+          value = prefs.getString('공간') ??
+              ''; // SharedPreferences에서 값을 가져올 때, 값이 null이면 빈 문자열을 대신 사용합니다.
           break;
         case 2:
-          value = '분류';
+          value = '위치';
           break;
         case 3:
-          value = prefs.getString('분류') ?? '';
+          value = prefs.getString('위치') ?? '';
           break;
         case 4:
-          value = '상세위치';
+          value = '상세';
           break;
         case 5:
-          value = prefs.getString('상세위치') ?? '';
+          value = prefs.getString('상세') ?? '';
           break;
         case 6:
-          value = '하자내용';
+          value = '분류';
           break;
         case 7:
-          value = prefs.getString('하자내용') ?? '';
+          value = prefs.getString('분류') ?? '';
           break;
         case 8:
-          value = '비고';
+          value = '내용';
           break;
         case 9:
-          value = prefs.getString('비고') ?? '';
+          value = prefs.getString('내용') ?? '';
           break;
         default:
           value = '';
       }
-      _controllers[i].text = value;
+      if (_controllers[i].text == "") {
+        _controllers[i].text = value;
+      }
     }
 
     setState(() {});
   }
 
+  Future captureAndSavePhotos(String locationInfoText) async {
+    if (locationInfoText == "") {
+      print("위치 정보를 입력해주세요.");
+      showMsgToast('위치 정보를 입력해주세요.');
+      return;
+    }
 
+    List<String> savedFileNames = []; // 저장된 이미지의 이름
+    List<File> tempImages = []; // 임시 이미지 저장소
+    String targetDirPath =
+        '/storage/emulated/0/Pictures/prj_${widget.inputText}'; // 사진이 저장될 앨범폴더 경로
 
+    int loopCnt;
+    if (_switchSingleMode) {
+      loopCnt = 1;
+    } else {
+      loopCnt = 2;
+    }
 
+    // loopCnt번 사진을 찍을 수 있도록 카메라 열기를 반복
+    for (int i = 0; i < loopCnt; i++) {
+      final image =
+          await ImagePicker().pickImage(source: imgPicker.ImageSource.camera);
 
-
-  Future getImage() async {
-    final image =
-        await ImagePicker().pickImage(source: imgPicker.ImageSource.camera);
-
-    setState(() {
       if (image != null) {
-        _image = File(image.path);
+        tempImages.add(File(image.path)); // 임시 배열에 추가
       } else {
-        print('No image selected.');
+        print('No image selected or camera closed.');
+        return; // 사용자가 카메라를 닫으면 함수 종료 (취소)
       }
-    });
+    }
+
+    // loopCnt 횟수 만큼 사진이 모두 찍혔을 때만 _images 배열에 추가
+    if (tempImages.length == loopCnt) {
+      _images.clear();
+      setState(() {
+        _images.addAll(tempImages);
+      });
+
+      for (var imageFile in tempImages) {
+        // 각 이미지에 대해 저장 로직 실행
+        String baseFileName =
+            await _getStackedImageName(targetDirPath, locationInfoText)
+                as String; // 실제 저장될 파일명 가져오기
+        await saveImageDataAsJpg(imageFile, baseFileName); // 이미지 데이터 저장
+        savedFileNames.add(baseFileName);
+      }
+      setState(() {});
+      await saveImagesDataAsJson(savedFileNames); // JSON 데이터 저장
+    }
+  }
+
+  Future saveImagesFromGallery() async {
+    // _images 리스트의 이미지를 저장하는 함수
+
+    List<String> savedFileNames = []; // 저장된 이미지의 이름
+    String targetDirPath = '/storage/emulated/0/Pictures/prj_${widget.inputText}'; // 사진이 저장될 앨범폴더 경로
+    int loopCnt;
+    if (_switchSingleMode) {
+      loopCnt = 1;
+    } else {
+      loopCnt = 2;
+    }
+
+    // loopCnt 횟수 만큼 사진이 모두 찍혔을 때만 _images 배열에 추가
+    if (_images.length == loopCnt) {
+      for (var imageFile in _images) {
+        // 각 이미지에 대해 저장 로직 실행
+        String baseFileName =
+            await _getStackedImageName(targetDirPath, _controllers[1].text)
+                as String; // 실제 저장될 파일명 가져오기
+        await saveImageDataAsJpg(imageFile, baseFileName); // 이미지 데이터 저장
+        savedFileNames.add(baseFileName);
+      }
+      setState(() {});
+      await saveImagesDataAsJson(savedFileNames); // JSON 데이터 저장
+    }
   }
 
   Future getImageFromGallery() async {
+    // 갤러리에서 사진 가져오는 함수
+    if (_controllers[1].text == "") {
+      print("위치 정보를 입력해주세요.");
+      showMsgToast('위치 정보를 입력해주세요.');
+      return;
+    }
+
     final image =
         await ImagePicker().pickImage(source: imgPicker.ImageSource.gallery);
 
     setState(() {
       if (image != null) {
-        _image = File(image.path);
+        _images.clear();
+        _images.add(File(image.path));
       } else {
-        print('No image selected.');
+        print('pic_ No image selected.');
       }
     });
+
+    saveImagesFromGallery();
   }
 
-  void _rotateImage() {
-    setState(() {
-      _rotationAngle += 90;
-      if (_rotationAngle >= 360) {
-        _rotationAngle = 0;
-      }
-    });
-  }
-
-  String _generateHtml() {
-    String htmlContent =
-        '<table border="0.3" style="background-color: white;" cellspacing="0">';
-
-    for (int i = 0; i < _controllers.length; i += 2) {
-      htmlContent += '''
-      <tr>
-        <td>${_controllers[i].text}</td>
-        <td>${_controllers[i + 1].text}</td>
-      </tr>
-      ''';
+  Future getTwoImagesFromGallery() async {
+    if (_controllers[1].text == "") {
+      print("위치 정보를 입력해주세요.");
+      showMsgToast('위치 정보를 입력해주세요.');
+      return;
     }
 
-    htmlContent += "</table>";
-    return htmlContent;
+    final List<XFile>? images = await ImagePicker().pickMultiImage();
+
+    if (images != null) {
+      if (images.length != 2) {
+        showMsgToast('2개의 이미지를 선택해주세요.');
+        // 필요한 경우 여기서 초과된 이미지를 제거하는 로직을 추가할 수 있습니다.
+      } else {
+        setState(() {
+          _images = images.map((image) => File(image.path)).toList();
+          saveImagesFromGallery();
+        });
+      }
+    } else {
+      print('이미지가 선택되지 않았습니다.');
+    }
+  }
+
+  Future<void> saveImageQualityPreference(double quality) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('imageQuality', quality);
+  }
+
+  Future<void> loadImageQualityPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 기본값을 20%로 설정합니다.
+    double quality = prefs.getDouble('imageQuality') ?? 20.0;
+    setState(() {
+      _imageQuality = quality;
+    });
+  }
+
+  void showSettingsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('설정'),
+              content: SingleChildScrollView(
+                child: ListBody(
+                  children: <Widget>[
+                    // 여기에 이미지 화질 조정 슬라이더 추가
+                    Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('이미지 화질 (${_imageQuality.round()}%)'),
+                          Slider(
+                            min: 0,
+                            max: 100,
+                            divisions: 5,
+                            // 20% 단위로 설정
+                            value: _imageQuality,
+                            label: "${_imageQuality.round()}%",
+                            onChanged: (double value) {
+                              setState(() {
+                                _imageQuality = value;
+                                saveImageQualityPreference(value);
+                              });
+                            },
+                          ),
+                          SwitchListTile(
+                            title: Text('싱글 모드'),
+                            value: _switchSingleMode,
+                            onChanged: (bool value) {
+                              setState(() {
+                                _switchSingleMode = value;
+                                print('pic_ _switchSingleMode: $_switchSingleMode');
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    // 다른 설정 옵션들...
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: Text('취소'),
+                  onPressed: () {
+                    Navigator.of(context).pop(); // 대화상자 닫기
+                  },
+                ),
+                TextButton(
+                  child: Text('확인'),
+                  onPressed: () {
+                    Navigator.of(context).pop(); // 대화상자 닫기
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        iconTheme: IconThemeData(color: Colors.black),
-        title:
-            Text('${widget.inputText}', style: TextStyle(color: Colors.black)),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: Color(0xFFFAFAFA),
-        bottom: PreferredSize(
-          child: Container(
-            color: Colors.grey[300], // 경계선의 색상을 설정합니다.
-            height: 0.5, // 경계선의 높이를 설정합니다.
+    return WillPopScope(
+      onWillPop: () async {
+        // 필요한 로직 추가 (예: 상태 초기화)
+        return true; // 뒤로 가기 허용
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          iconTheme: IconThemeData(color: Colors.black),
+          title: Text('${widget.inputText}',
+              style: TextStyle(color: Colors.black)),
+          elevation: 0,
+          centerTitle: true,
+          backgroundColor: Color(0xFFFAFAFA),
+          bottom: PreferredSize(
+            child: Container(
+              color: Colors.grey[300], // 경계선의 색상을 설정합니다.
+              height: 0.5, // 경계선의 높이를 설정합니다.
+            ),
+            preferredSize: Size.fromHeight(0.5),
           ),
-          preferredSize: Size.fromHeight(0.5),
         ),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: 5,
-              itemBuilder: (context, index) => Container(
-                height: 37,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: Container(
-                        height: 30, // Set the height of the TextField
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            print("ElevatedButton was clicked");
-                            await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => KeywordSettingScreen(
-                                      settingMenu: _controllers[index * 2]
-                                          .text), // 텍스트 필드의 값을 다음 화면으로 전달
-                                ));
-                            await _loadKeywordsMap();
-                            await _loadValues();
+        body: Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                itemCount: 5,
+                itemBuilder: (context, index) => Container(
+                  height: 37,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Container(
+                          height: 30, // Set the height of the TextField
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              print("Pic_ ElevatedButton was clicked");
+                              // KeywordSettingScreen으로 이동하고 변경 사항을 기다림
+                              final result = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => KeywordSettingScreen(
+                                        settingMenu: _controllers[index * 2]
+                                            .text), // 텍스트 필드의 값을 다음 화면으로 전달
+                                  ));
 
-                          },
-                          child: Text(
-                            '${_controllers[index * 2].text}',
-                            style: TextStyle(color: Colors.black),
+                              if (result != null) {
+                                print("Pic_ 값 변경으로 로직 실행");
+                                await _loadKeywordsMap();
+                                await _loadValue(result);
+                              }
+                            },
+                            child: Text(
+                              '${_controllers[index * 2].text}',
+                              style: TextStyle(color: Colors.black),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                    vertical: 0, horizontal: 10),
+                                side: BorderSide(
+                                  color: Colors.black,
+                                ),
+                                backgroundColor: Colors.white),
                           ),
-                          style: ElevatedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                  vertical: 0, horizontal: 10),
-                              side: BorderSide(
-                                color: Colors.black,
-                              ),
-                              backgroundColor: Colors.white),
                         ),
                       ),
-                    ),
-                    SizedBox(width: 8.0),
-                    Expanded(
-                      flex: 7,
-                      child: Container(
-                        height: 30, // Set the height of the TextField
-                        child: TypeAheadFormField(
-                          textFieldConfiguration: TextFieldConfiguration(
+                      SizedBox(width: 8.0),
+                      Expanded(
+                        flex: 7,
+                        child: Container(
+                          height: 30, // Set the height of the TextField
+                          child: TextField(
                             controller: _controllers[index * 2 + 1],
                             onChanged: (value) {
                               print("map: ${_keywordsMap}");
@@ -475,115 +546,60 @@ class _DashBoardScreenState extends State<DashboardScreen> {
                             },
                             decoration: InputDecoration(
                               contentPadding: EdgeInsets.symmetric(
-                                  vertical: 0, horizontal: 10),
+                                  vertical: 7.5, horizontal: 10),
                               // hintText: 'Input ${index * 2 + 2}',
                               border: OutlineInputBorder(),
                             ),
-                            style: TextStyle(fontSize: 10),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                           ),
-                          suggestionsCallback: (pattern) async {
-                            // TODO: 여기에 실제로 제안을 가져오는 로직을 추가
-                            List<String> keywords =
-                                _keywordsMap['KeywordField${index * 2 + 1}'] ?? <String>[];
-
-                            print('키워드 필드 확인: KeywordField${index * 2 + 1}');
-                            print('키워드 리스트 확인: ${keywords.toString()}');
-                            return keywords;
-                          },
-                          itemBuilder: (context, suggestion) {
-                            return ListTile(
-                              title: Text(suggestion.toString()),
-                            );
-                          },
-                          onSuggestionSelected: (suggestion) {
-                            _controllers[index * 2 + 1].text =
-                                suggestion.toString();
-                            setState(() {});
-                          },
-                          validator: (value) {
-                            if (value!.isEmpty) {
-                              return 'Please input the data';
-                            }
-                            return null;
-                          },
-                          onSaved: (value) => print('Value saved: $value'),
                         ),
                       ),
-                    ),
-                    Expanded(
-                        flex: 1,
-                        child: IconButton(
-                          icon: Icon(Icons.arrow_drop_down_circle_outlined),
-                          onPressed: () {},
-                        ))
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              IconButton(
-                icon: Icon(Icons.camera),
-                onPressed: () {
-                  getImage();
-                  print('Camera icon pressed');
-                },
-              ),
-              IconButton(
-                icon: Icon(Icons.photo_album),
-                onPressed: () {
-                  getImageFromGallery();
-                  print('Star icon pressedd');
-                },
-              ),
-              IconButton(
-                icon: Icon(Icons.settings),
-                onPressed: () {},
-              ),
-              IconButton(
-                icon: Icon(Icons.rotate_right),
-                onPressed: () {
-                  // _rotateImage(); 임시로 막아둠
-                  print('rotate_right icon pressedd');
-                },
-              ),
-              IconButton(
-                icon: Icon(Icons.check),
-                onPressed: () async {
-                  saveImage(_controllers[1].text);
-                  print('check icon pressedd');
-                },
-              ),
-            ],
-          ),
-          Expanded(
-            flex: 2,
-            child: _image == null
-                ? Center(child: Text('이미지를 선택해주세요.'))
-                : RepaintBoundary(
-                    key: _globalKey,
-                    child: Stack(
-                      alignment: _imageAlignment,
-                      children: [
-                        Transform.rotate(
-                          angle: _rotationAngle * (3.141592653589793 / 180),
-                          child: Image.file(_image!, fit: BoxFit.contain),
-                        ),
-                        Positioned(
-                            left: 0, // 왼쪽 끝으로 이동
-                            bottom: 0, // 아래쪽 끝으로 이동
-                            child: HtmlWidget(
-                              _generateHtml(),
-                              key: ValueKey<String>(_generateHtml()),
-                              textStyle: TextStyle(fontSize: 7),
-                            )),
-                      ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                IconButton(
+                  icon: Icon(Icons.camera),
+                  onPressed: () {
+                    // getImage();
+                    captureAndSavePhotos(_controllers[1].text);
+                    print('Camera icon pressed');
+                  },
+                ),
+                IconButton(
+                  icon: Icon(Icons.photo_album),
+                  onPressed: () {
+                    if (_switchSingleMode) {
+                      getImageFromGallery();
+                    } else {
+                      getTwoImagesFromGallery();
+                    }
+                    print('Star icon pressedd');
+                  },
+                ),
+                IconButton(
+                  icon: Icon(Icons.settings),
+                  onPressed: () => showSettingsDialog(context),
+                ),
+              ],
+            ),
+            Expanded(
+              flex: 2,
+              child: _images.isEmpty
+                  ? Center(child: Text('이미지를 선택해주세요.'))
+                  : PageView.builder(
+                      itemCount: _images.length,
+                      itemBuilder: (context, index) {
+                        return Image.file(_images[index], fit: BoxFit.contain);
+                      },
                     ),
-                  ),
-          )
-        ],
+            )
+          ],
+        ),
       ),
     );
   }
