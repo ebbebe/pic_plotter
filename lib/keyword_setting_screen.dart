@@ -188,16 +188,12 @@ class _KeywordSettingScreenState extends State<KeywordSettingScreen> {
                   title: Text('${_keywords[index]}'),
                   tileColor:
                       _selectedItemIndex == index ? Colors.blue[200] : null,
+                  onTap: () {
+                    _onItemTapped(index); // 아이템 탭 했을 때 처리
+                  },
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        icon: Icon(Icons.check),
-                        onPressed: () {
-                          // 수정 버튼을 눌렀을 때 처리
-                          _onItemTapped(index); // 아이템을 탭했을 때 처리
-                        },
-                      ),
                       IconButton(
                         icon: Icon(Icons.delete),
                         onPressed: () {
